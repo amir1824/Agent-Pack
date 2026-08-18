@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>pack dashboard</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="rail">
+        <p class="mark">pack</p>
+        <p class="mark-sub" id="kind-label">loading</p>
+        <nav class="nav" aria-label="Views">
+          <button type="button" data-view="overview" class="is-active">Overview</button>
+          <button type="button" data-view="runs">Runs</button>
+          <button type="button" data-view="skills">Skills</button>
+          <button type="button" data-view="profiles">Profiles</button>
+          <button type="button" data-view="constitution">Constitution</button>
+        </nav>
+        <div class="rail-foot">
+          <span class="live" id="live"><i></i> live</span>
+          <span class="path" id="root-path"></span>
+        </div>
+      </aside>
+      <main class="stage">
+        <header class="mast">
+          <div>
+            <h1 id="pack-name">pack</h1>
+            <p class="pin" id="pin"></p>
+          </div>
+          <dl class="stats" id="stats"></dl>
+        </header>
+        <section id="view" class="view"></section>
+      </main>
+    </div>
+    <aside class="drawer" id="drawer" hidden>
+      <header>
+        <p class="drawer-kicker" id="drawer-kicker"></p>
+        <h2 id="drawer-title"></h2>
+        <button type="button" class="ghost" id="drawer-close">Close</button>
+      </header>
+      <div class="prose" id="drawer-body"></div>
+    </aside>
+    <script src="/app.js"></script>
+  </body>
+</html>
