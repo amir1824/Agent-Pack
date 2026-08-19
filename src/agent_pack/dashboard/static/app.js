@@ -1,5 +1,86 @@
 "use strict";
 (() => {
+  // src/agent_pack/dashboard/ui/log_rows.ts
+  var LOG_PAGE_SIZE = 25;
+  function renderLogTimeline(entries, escapeHtml2, chip2) {
+    if (!entries.length) return '<p class="muted">No log entries yet.</p>';
+    return `<ol class="log-timeline">${entries.map(
+      (entry) => `
+        <li class="log-entry ${escapeHtml2(entry.status || "pending")}">
+          <time>${escapeHtml2(entry.at || "\u2014")}</time>
+          ${chip2(entry.status || "pending", entry.status === "done" ? "ok" : entry.status === "failed" ? "bad" : "warn")}
+          <p>${escapeHtml2(entry.detail || "\u2014")}</p>
+        </li>`
+    ).join("")}</ol>`;
+  }
+  function eventLogEntries(run, node) {
+    if (node.kind === "start") {
+      return (run.events || []).filter((event) => event.event === "started").map((event) => ({ status: "started", at: event.started_at ?? "", detail: event.request_text ?? "" }));
+    }
+    if (node.kind === "complete") {
+      const completed = (run.events || []).find((event) => event.event === "completed");
+      if (completed) return [{ status: completed.outcome ?? "completed", at: completed.completed_at ?? "", detail: `Run ${completed.outcome ?? "closed"}` }];
+      return [{ status: "pending", at: "\u2014", detail: "Still running" }];
+    }
+    return node.log || [];
+  }
+  function runTimeline(run) {
+    const eventRows = (run.events || []).map((event) => ({
+      at: event.started_at ?? event.completed_at ?? "",
+      kind: event.event ?? "",
+      label: event.request_text ?? event.outcome ?? ""
+    }));
+    const stepRows = (run.steps || []).flatMap(
+      (step) => (step.log || []).map((entry) => ({
+        at: entry.at ?? "",
+        kind: "step",
+        label: `${step.name}: ${entry.status}${entry.detail ? ` \u2014 ${entry.detail}` : ""}`
+      }))
+    );
+    return [...eventRows, ...stepRows].sort((left, right) => left.at.localeCompare(right.at));
+  }
+  function allLogRows(runs) {
+    return runs.flatMap(
+      (run) => runTimeline(run).map((row) => ({
+        at: row.at,
+        kind: row.kind,
+        runId: run.invocation_id,
+        profile: run.profile_id,
+        detail: row.label
+      }))
+    ).sort((left, right) => right.at.localeCompare(left.at));
+  }
+  function clampLogPage(page, totalRows) {
+    const maxPage = Math.max(0, Math.ceil(totalRows / LOG_PAGE_SIZE) - 1);
+    return Math.min(Math.max(page, 0), maxPage);
+  }
+
+  // src/agent_pack/dashboard/ui/markdown.ts
+  function escapeHtml(value) {
+    return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+  }
+  function inline(text) {
+    return text.replaceAll(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replaceAll(/`([^`]+)`/g, "<code>$1</code>");
+  }
+  function renderMarkdown(src) {
+    const escaped = escapeHtml(src || "");
+    const blocks = escaped.split(/```(?:\w*)\n?/);
+    const html = blocks.map((chunk, index) => {
+      if (index % 2 === 1) {
+        return `<pre><code>${chunk.replace(/\n$/, "")}</code></pre>`;
+      }
+      return chunk.split("\n").map((line) => {
+        if (line.startsWith("### ")) return `<h3>${inline(line.slice(4))}</h3>`;
+        if (line.startsWith("## ")) return `<h2>${inline(line.slice(3))}</h2>`;
+        if (line.startsWith("# ")) return `<h1>${inline(line.slice(2))}</h1>`;
+        if (line.startsWith("- ")) return `<li>${inline(line.slice(2))}</li>`;
+        if (!line.trim()) return "";
+        return `<p>${inline(line)}</p>`;
+      }).join("\n").replaceAll(/(?:<li>.*<\/li>\n?)+/g, (list) => `<ul>${list}</ul>`);
+    }).join("");
+    return html || '<p class="muted">Empty file.</p>';
+  }
+
   // src/agent_pack/dashboard/ui/flow.ts
   function roleLabel(name) {
     return String(name).split(/[-_]/).filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
@@ -138,87 +219,6 @@
     </article>`;
   }
 
-  // src/agent_pack/dashboard/ui/log_rows.ts
-  var LOG_PAGE_SIZE = 25;
-  function renderLogTimeline(entries, escapeHtml2, chip2) {
-    if (!entries.length) return '<p class="muted">No log entries yet.</p>';
-    return `<ol class="log-timeline">${entries.map(
-      (entry) => `
-        <li class="log-entry ${escapeHtml2(entry.status || "pending")}">
-          <time>${escapeHtml2(entry.at || "\u2014")}</time>
-          ${chip2(entry.status || "pending", entry.status === "done" ? "ok" : entry.status === "failed" ? "bad" : "warn")}
-          <p>${escapeHtml2(entry.detail || "\u2014")}</p>
-        </li>`
-    ).join("")}</ol>`;
-  }
-  function eventLogEntries(run, node) {
-    if (node.kind === "start") {
-      return (run.events || []).filter((event) => event.event === "started").map((event) => ({ status: "started", at: event.started_at ?? "", detail: event.request_text ?? "" }));
-    }
-    if (node.kind === "complete") {
-      const completed = (run.events || []).find((event) => event.event === "completed");
-      if (completed) return [{ status: completed.outcome ?? "completed", at: completed.completed_at ?? "", detail: `Run ${completed.outcome ?? "closed"}` }];
-      return [{ status: "pending", at: "\u2014", detail: "Still running" }];
-    }
-    return node.log || [];
-  }
-  function runTimeline(run) {
-    const eventRows = (run.events || []).map((event) => ({
-      at: event.started_at ?? event.completed_at ?? "",
-      kind: event.event ?? "",
-      label: event.request_text ?? event.outcome ?? ""
-    }));
-    const stepRows = (run.steps || []).flatMap(
-      (step) => (step.log || []).map((entry) => ({
-        at: entry.at ?? "",
-        kind: "step",
-        label: `${step.name}: ${entry.status}${entry.detail ? ` \u2014 ${entry.detail}` : ""}`
-      }))
-    );
-    return [...eventRows, ...stepRows].sort((left, right) => left.at.localeCompare(right.at));
-  }
-  function allLogRows(runs) {
-    return runs.flatMap(
-      (run) => runTimeline(run).map((row) => ({
-        at: row.at,
-        kind: row.kind,
-        runId: run.invocation_id,
-        profile: run.profile_id,
-        detail: row.label
-      }))
-    ).sort((left, right) => right.at.localeCompare(left.at));
-  }
-  function clampLogPage(page, totalRows) {
-    const maxPage = Math.max(0, Math.ceil(totalRows / LOG_PAGE_SIZE) - 1);
-    return Math.min(Math.max(page, 0), maxPage);
-  }
-
-  // src/agent_pack/dashboard/ui/markdown.ts
-  function escapeHtml(value) {
-    return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
-  }
-  function inline(text) {
-    return text.replaceAll(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replaceAll(/`([^`]+)`/g, "<code>$1</code>");
-  }
-  function renderMarkdown(src) {
-    const escaped = escapeHtml(src || "");
-    const blocks = escaped.split(/```(?:\w*)\n?/);
-    const html = blocks.map((chunk, index) => {
-      if (index % 2 === 1) {
-        return `<pre><code>${chunk.replace(/\n$/, "")}</code></pre>`;
-      }
-      return chunk.split("\n").map((line) => {
-        if (line.startsWith("### ")) return `<h3>${inline(line.slice(4))}</h3>`;
-        if (line.startsWith("## ")) return `<h2>${inline(line.slice(3))}</h2>`;
-        if (line.startsWith("# ")) return `<h1>${inline(line.slice(2))}</h1>`;
-        if (line.startsWith("- ")) return `<li>${inline(line.slice(2))}</li>`;
-        if (!line.trim()) return "";
-        return `<p>${inline(line)}</p>`;
-      }).join("\n").replaceAll(/(?:<li>.*<\/li>\n?)+/g, (list) => `<ul>${list}</ul>`);
-    }).join("");
-    return html || '<p class="muted">Empty file.</p>';
-  }
-
   // src/agent_pack/dashboard/ui/views.ts
   var LANES = ["done", "failed", "abandoned"];
   function renderStats(data, statsEl) {
@@ -232,6 +232,37 @@
     if (stateLabel === "clean" || stateLabel === "valid") return "ok";
     if (stateLabel === "dirty" || stateLabel === "not synced") return "warn";
     return "bad";
+  }
+  function renderUpgradeBanner(status, busy = false) {
+    if (!status) {
+      return "";
+    }
+    const checkBtn = `<button type="button" class="ghost" data-upgrade-check${busy ? " disabled" : ""}>Check again</button>`;
+    const upgradeBtn = `<button type="button" class="ghost upgrade-run" data-upgrade-run${busy ? " disabled" : ""}>Upgrade</button>`;
+    if (status.error) {
+      return `<article class="panel upgrade-banner upgrade-banner-error stack">
+      <p class="kicker">Update check</p>
+      <p class="muted">${escapeHtml(status.error)}</p>
+      <div class="upgrade-actions">
+        ${checkBtn}
+        ${status.available ? upgradeBtn : ""}
+      </div>
+    </article>`;
+    }
+    if (!status.available) {
+      return "";
+    }
+    const message = status.tag_moved ? `Pinned tag ${status.current_tag} moved on the remote.` : `${status.latest_tag} is available (pinned: ${status.current_tag}).`;
+    const busyNote = busy ? `<p class="muted">Upgrading\u2026</p>` : "";
+    return `<article class="panel upgrade-banner stack">
+    <p class="kicker">Update available</p>
+    <p>${escapeHtml(message)}</p>
+    ${busyNote}
+    <div class="upgrade-actions">
+      ${checkBtn}
+      ${upgradeBtn}
+    </div>
+  </article>`;
   }
   function renderOverview(data) {
     const pack = data.pack;
@@ -338,6 +369,161 @@
     ).join("")}</div>`;
   }
 
+  // src/agent_pack/dashboard/ui/upgrade.ts
+  var upgrade = {
+    status: null,
+    busy: false
+  };
+  function upgradeBanner(ctx) {
+    if (ctx.view !== "overview") {
+      return "";
+    }
+    return renderUpgradeBanner(upgrade.status, upgrade.busy);
+  }
+  function repaintOverview(ctx) {
+    if (ctx.view === "overview" && ctx.getData()) {
+      ctx.paint();
+    }
+  }
+  async function loadUpgradeStatus(ctx, force = false) {
+    try {
+      const url = force ? "/api/upgrade-status?force=1" : "/api/upgrade-status";
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        throw new Error("upgrade status failed");
+      }
+      upgrade.status = await resp.json();
+      repaintOverview(ctx);
+    } catch {
+      upgrade.status = {
+        available: false,
+        current_tag: "",
+        latest_tag: "",
+        tag_moved: false,
+        error: "Could not check for updates."
+      };
+      repaintOverview(ctx);
+    }
+  }
+  async function runUpgrade(ctx) {
+    if (upgrade.busy || !upgrade.status?.available) {
+      return;
+    }
+    upgrade.busy = true;
+    repaintOverview(ctx);
+    const prior = upgrade.status;
+    try {
+      const resp = await fetch("/api/upgrade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag: prior.latest_tag })
+      });
+      if (!resp.ok) {
+        const payload = await resp.json();
+        throw new Error(payload.error || "upgrade failed");
+      }
+      ctx.resetFingerprint();
+      await ctx.reloadSnapshot();
+      await loadUpgradeStatus(ctx, true);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "upgrade failed";
+      upgrade.status = {
+        available: prior.available,
+        current_tag: prior.current_tag,
+        latest_tag: prior.latest_tag,
+        tag_moved: prior.tag_moved,
+        error: message
+      };
+      repaintOverview(ctx);
+    } finally {
+      upgrade.busy = false;
+      repaintOverview(ctx);
+    }
+  }
+  function handleUpgradeClick(target, ctx) {
+    if (target.closest("[data-upgrade-check]")) {
+      void loadUpgradeStatus(ctx, true);
+      return true;
+    }
+    if (target.closest("[data-upgrade-run]") && !upgrade.busy) {
+      void runUpgrade(ctx);
+      return true;
+    }
+    return false;
+  }
+  function bootUpgrade(ctx) {
+    void loadUpgradeStatus(ctx);
+  }
+
+  // src/agent_pack/dashboard/ui/drawer.ts
+  function renderRunBody(data, id) {
+    const run = data.runs.find((row) => row.invocation_id === id);
+    if (!run) return "";
+    const steps = (run.steps || []).map((step) => `- ${step.name}: ${step.status}`).join("\n");
+    const pin = run.pack_tag ? `pack: ${run.pack_name ?? "\u2014"}@${run.pack_tag}
+commit: ${run.pack_commit ?? "\u2014"}
+` : "";
+    return `${pin}profile: ${run.profile_id}
+request: ${run.request_text}
+started: ${run.started_at}
+completed: ${run.completed_at || "\u2014"}
+outcome: ${run.outcome}
+${steps ? `
+steps:
+${steps}` : ""}`;
+  }
+  function fillDrawer(host, runId, index) {
+    const data = host.getData();
+    if (!data) {
+      return false;
+    }
+    const run = data.runs.find((row) => row.invocation_id === runId);
+    const node = run && flowNodes(run)[index];
+    if (!node) {
+      return false;
+    }
+    host.$("drawer-kicker").textContent = node.phase || node.kind;
+    host.$("drawer-title").textContent = node.label || node.name;
+    const skill = node.kind === "step" ? data.skills.find((row) => row.id === node.name) : null;
+    const timeline = renderLogTimeline(eventLogEntries(run, node), escapeHtml, chip);
+    const skillBlock = skill ? `<section class="skill-note"><p class="kicker">Skill</p>${renderMarkdown(skill.description)}</section>` : "";
+    host.$("drawer-body").innerHTML = `${timeline}${skillBlock}`;
+    return true;
+  }
+  function openItemDrawer(host, kind, id) {
+    const data = host.getData();
+    if (!data) return;
+    host.setSelected(null);
+    const skill = kind === "skill" ? data.skills.find((row) => row.id === id) : null;
+    const profile = kind === "profile" ? data.profiles.find((row) => row.id === id) : null;
+    const run = kind === "run" ? data.runs.find((row) => row.invocation_id === id) : null;
+    host.$("drawer-kicker").textContent = skill?.path || run?.outcome || kind;
+    host.$("drawer-title").textContent = skill?.name || profile?.name || run?.profile_id || id;
+    const body = skill?.body || profile?.body || (run ? renderRunBody(data, id) : "");
+    host.$("drawer-body").innerHTML = renderMarkdown(body);
+    host.$("drawer").hidden = false;
+  }
+  function openNodeDrawer(host, runId, index) {
+    host.setSelected({ runId, index });
+    fillDrawer(host, runId, index);
+    host.$("drawer").hidden = false;
+  }
+  function openDrawerFromElement(host, button) {
+    const kind = button.dataset.kind || "";
+    if (kind === "start" || kind === "complete" || kind === "step") {
+      openNodeDrawer(host, String(button.dataset.run), Number(button.dataset.index));
+      return;
+    }
+    openItemDrawer(host, kind, String(button.dataset.id));
+  }
+  function restoreDrawer(host) {
+    const selected = host.getSelected();
+    if (!selected) {
+      return false;
+    }
+    return fillDrawer(host, selected.runId, selected.index);
+  }
+
   // src/agent_pack/dashboard/ui/app.ts
   var state = {
     view: "overview",
@@ -355,6 +541,23 @@
   };
   var POLL_ACTIVE_MS = 1e3;
   var POLL_IDLE_MS = 2e3;
+  var drawerHost = {
+    getData: () => state.data,
+    getSelected: () => state.selected,
+    setSelected: (value) => {
+      state.selected = value;
+    },
+    $
+  };
+  var upgradeCtx = {
+    view: state.view,
+    getData: () => state.data,
+    paint,
+    reloadSnapshot: load,
+    resetFingerprint: () => {
+      state.fingerprint = "";
+    }
+  };
   function renderConstitution(data) {
     return `<article class="panel prose">${renderMarkdown(data.constitution)}</article>`;
   }
@@ -368,24 +571,6 @@
   function viewLabel() {
     return document.querySelector(`.nav [data-view="${state.view}"]`)?.textContent?.trim() || state.view;
   }
-  function fillDrawer(runId, index) {
-    const data = state.data;
-    if (!data) {
-      return false;
-    }
-    const run = data.runs.find((row) => row.invocation_id === runId);
-    const node = run && flowNodes(run)[index];
-    if (!node) {
-      return false;
-    }
-    $("drawer-kicker").textContent = node.phase || node.kind;
-    $("drawer-title").textContent = node.label || node.name;
-    const skill = node.kind === "step" ? data.skills.find((row) => row.id === node.name) : null;
-    const timeline = renderLogTimeline(eventLogEntries(run, node), escapeHtml, chip);
-    const skillBlock = skill ? `<section class="skill-note"><p class="kicker">Skill</p>${renderMarkdown(skill.description)}</section>` : "";
-    $("drawer-body").innerHTML = `${timeline}${skillBlock}`;
-    return true;
-  }
   function snapshotFingerprint(data) {
     return JSON.stringify({ runs: data.runs, counts: data.counts });
   }
@@ -394,6 +579,7 @@
     if (!data) {
       return;
     }
+    upgradeCtx.view = state.view;
     const drawer = $("drawer");
     const keepOpen = Boolean(state.selected) && !drawer.hidden;
     const scrollTop = keepOpen ? $("drawer-body").scrollTop : 0;
@@ -405,55 +591,13 @@
     $("pin").textContent = lock ? `${lock.source}@${lock.tag}` : data.root;
     document.title = `${label} \xB7 agent-pack`;
     renderStats(data, $("stats"));
-    $("view").innerHTML = views[state.view](data);
-    if (state.selected && fillDrawer(state.selected.runId, state.selected.index)) {
+    $("view").innerHTML = upgradeBanner(upgradeCtx) + views[state.view](data);
+    if (restoreDrawer(drawerHost)) {
       drawer.hidden = false;
       if (keepOpen) {
         $("drawer-body").scrollTop = scrollTop;
       }
     }
-  }
-  function renderRunBody(id) {
-    const run = state.data?.runs.find((row) => row.invocation_id === id);
-    if (!run) return "";
-    const steps = (run.steps || []).map((step) => `- ${step.name}: ${step.status}`).join("\n");
-    const pin = run.pack_tag ? `pack: ${run.pack_name ?? "\u2014"}@${run.pack_tag}
-commit: ${run.pack_commit ?? "\u2014"}
-` : "";
-    return `${pin}profile: ${run.profile_id}
-request: ${run.request_text}
-started: ${run.started_at}
-completed: ${run.completed_at || "\u2014"}
-outcome: ${run.outcome}
-${steps ? `
-steps:
-${steps}` : ""}`;
-  }
-  function openItemDrawer(kind, id) {
-    const data = state.data;
-    if (!data) return;
-    state.selected = null;
-    const skill = kind === "skill" ? data.skills.find((row) => row.id === id) : null;
-    const profile = kind === "profile" ? data.profiles.find((row) => row.id === id) : null;
-    const run = kind === "run" ? data.runs.find((row) => row.invocation_id === id) : null;
-    $("drawer-kicker").textContent = skill?.path || run?.outcome || kind;
-    $("drawer-title").textContent = skill?.name || profile?.name || run?.profile_id || id;
-    const body = skill?.body || profile?.body || (run ? renderRunBody(id) : "");
-    $("drawer-body").innerHTML = renderMarkdown(body);
-    $("drawer").hidden = false;
-  }
-  function openNodeDrawer(runId, index) {
-    state.selected = { runId, index };
-    fillDrawer(runId, index);
-    $("drawer").hidden = false;
-  }
-  function openDrawerFromElement(button) {
-    const kind = button.dataset.kind || "";
-    if (kind === "start" || kind === "complete" || kind === "step") {
-      openNodeDrawer(String(button.dataset.run), Number(button.dataset.index));
-      return;
-    }
-    openItemDrawer(kind, String(button.dataset.id));
   }
   async function load() {
     try {
@@ -492,6 +636,9 @@ ${steps}` : ""}`;
     });
     $("view").addEventListener("click", (event) => {
       const target = event.target;
+      if (handleUpgradeClick(target, upgradeCtx)) {
+        return;
+      }
       const pageBtn = target.closest("[data-log-page]");
       if (pageBtn && !pageBtn.hasAttribute("disabled")) {
         state.logPage = Number(pageBtn.dataset.logPage);
@@ -502,13 +649,14 @@ ${steps}` : ""}`;
       if (!button) {
         return;
       }
-      openDrawerFromElement(button);
+      openDrawerFromElement(drawerHost, button);
     });
     $("drawer-close").addEventListener("click", () => {
       state.selected = null;
       $("drawer").hidden = true;
     });
     void tick();
+    bootUpgrade(upgradeCtx);
   }
   if (typeof document !== "undefined" && document.getElementById("view")) {
     boot();

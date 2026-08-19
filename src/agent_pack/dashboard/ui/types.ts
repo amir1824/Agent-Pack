@@ -56,6 +56,14 @@ export type Profile = {
   body?: string;
 };
 
+export type UpgradeStatus = {
+  available: boolean;
+  current_tag: string;
+  latest_tag: string;
+  tag_moved: boolean;
+  error?: string;
+};
+
 export type Snapshot = {
   kind: string;
   root: string;

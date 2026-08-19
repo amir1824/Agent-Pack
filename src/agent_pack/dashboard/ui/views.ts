@@ -1,7 +1,7 @@
 import { renderFlow } from "./flow";
 import { LOG_PAGE_SIZE, allLogRows } from "./log_rows";
 import { escapeHtml } from "./markdown";
-import type { Profile, Skill, Snapshot, TimelineRow } from "./types";
+import type { Profile, Skill, Snapshot, TimelineRow, UpgradeStatus } from "./types";
 
 const LANES = ["done", "failed", "abandoned"] as const;
 
@@ -20,6 +20,40 @@ function toneFor(stateLabel: string): string {
   if (stateLabel === "clean" || stateLabel === "valid") return "ok";
   if (stateLabel === "dirty" || stateLabel === "not synced") return "warn";
   return "bad";
+}
+
+export function renderUpgradeBanner(status: UpgradeStatus | null, busy = false): string {
+  if (!status) {
+    return "";
+  }
+  const checkBtn = `<button type="button" class="ghost" data-upgrade-check${busy ? " disabled" : ""}>Check again</button>`;
+  const upgradeBtn = `<button type="button" class="ghost upgrade-run" data-upgrade-run${busy ? " disabled" : ""}>Upgrade</button>`;
+  if (status.error) {
+    return `<article class="panel upgrade-banner upgrade-banner-error stack">
+      <p class="kicker">Update check</p>
+      <p class="muted">${escapeHtml(status.error)}</p>
+      <div class="upgrade-actions">
+        ${checkBtn}
+        ${status.available ? upgradeBtn : ""}
+      </div>
+    </article>`;
+  }
+  if (!status.available) {
+    return "";
+  }
+  const message = status.tag_moved
+    ? `Pinned tag ${status.current_tag} moved on the remote.`
+    : `${status.latest_tag} is available (pinned: ${status.current_tag}).`;
+  const busyNote = busy ? `<p class="muted">Upgrading…</p>` : "";
+  return `<article class="panel upgrade-banner stack">
+    <p class="kicker">Update available</p>
+    <p>${escapeHtml(message)}</p>
+    ${busyNote}
+    <div class="upgrade-actions">
+      ${checkBtn}
+      ${upgradeBtn}
+    </div>
+  </article>`;
 }
 
 export function renderOverview(data: Snapshot): string {

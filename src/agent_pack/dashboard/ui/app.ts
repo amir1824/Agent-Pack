@@ -1,7 +1,13 @@
-import { flowNodes } from "./flow";
 import { eventLogEntries, renderLogTimeline, allLogRows, clampLogPage } from "./log_rows";
-import { escapeHtml, renderMarkdown } from "./markdown";
-import { chip, renderCards, renderOverview, renderRuns, renderStats } from "./views";
+import { renderMarkdown } from "./markdown";
+import { renderCards, renderOverview, renderRuns, renderStats } from "./views";
+import {
+  bootUpgrade,
+  handleUpgradeClick,
+  upgradeBanner,
+  type UpgradeContext,
+} from "./upgrade";
+import { fillDrawer, openDrawerFromElement, restoreDrawer, type DrawerHost } from "./drawer";
 import type { Snapshot } from "./types";
 
 type AppState = {
@@ -31,6 +37,25 @@ const $ = (id: string): HTMLElement => {
 const POLL_ACTIVE_MS = 1000;
 const POLL_IDLE_MS = 2000;
 
+const drawerHost: DrawerHost = {
+  getData: () => state.data,
+  getSelected: () => state.selected,
+  setSelected: (value) => {
+    state.selected = value;
+  },
+  $,
+};
+
+const upgradeCtx: UpgradeContext = {
+  view: state.view,
+  getData: () => state.data,
+  paint,
+  reloadSnapshot: load,
+  resetFingerprint: () => {
+    state.fingerprint = "";
+  },
+};
+
 function renderConstitution(data: Snapshot): string {
   return `<article class="panel prose">${renderMarkdown(data.constitution)}</article>`;
 }
@@ -50,27 +75,6 @@ function viewLabel(): string {
   );
 }
 
-function fillDrawer(runId: string, index: number): boolean {
-  const data = state.data;
-  if (!data) {
-    return false;
-  }
-  const run = data.runs.find((row) => row.invocation_id === runId);
-  const node = run && flowNodes(run)[index];
-  if (!node) {
-    return false;
-  }
-  $("drawer-kicker").textContent = node.phase || node.kind;
-  $("drawer-title").textContent = node.label || node.name;
-  const skill = node.kind === "step" ? data.skills.find((row) => row.id === node.name) : null;
-  const timeline = renderLogTimeline(eventLogEntries(run, node), escapeHtml, chip);
-  const skillBlock = skill
-    ? `<section class="skill-note"><p class="kicker">Skill</p>${renderMarkdown(skill.description)}</section>`
-    : "";
-  $("drawer-body").innerHTML = `${timeline}${skillBlock}`;
-  return true;
-}
-
 function snapshotFingerprint(data: Snapshot): string {
   return JSON.stringify({ runs: data.runs, counts: data.counts });
 }
@@ -80,6 +84,7 @@ function paint(): void {
   if (!data) {
     return;
   }
+  upgradeCtx.view = state.view;
   const drawer = $("drawer");
   const keepOpen = Boolean(state.selected) && !drawer.hidden;
   const scrollTop = keepOpen ? $("drawer-body").scrollTop : 0;
@@ -91,52 +96,13 @@ function paint(): void {
   $("pin").textContent = lock ? `${lock.source}@${lock.tag}` : data.root;
   document.title = `${label} · agent-pack`;
   renderStats(data, $("stats"));
-  $("view").innerHTML = views[state.view](data);
-  if (state.selected && fillDrawer(state.selected.runId, state.selected.index)) {
+  $("view").innerHTML = upgradeBanner(upgradeCtx) + views[state.view](data);
+  if (restoreDrawer(drawerHost)) {
     drawer.hidden = false;
     if (keepOpen) {
       $("drawer-body").scrollTop = scrollTop;
     }
   }
-}
-
-function renderRunBody(id: string): string {
-  const run = state.data?.runs.find((row) => row.invocation_id === id);
-  if (!run) return "";
-  const steps = (run.steps || []).map((step) => `- ${step.name}: ${step.status}`).join("\n");
-  const pin = run.pack_tag
-    ? `pack: ${run.pack_name ?? "—"}@${run.pack_tag}\ncommit: ${run.pack_commit ?? "—"}\n`
-    : "";
-  return `${pin}profile: ${run.profile_id}\nrequest: ${run.request_text}\nstarted: ${run.started_at}\ncompleted: ${run.completed_at || "—"}\noutcome: ${run.outcome}\n${steps ? `\nsteps:\n${steps}` : ""}`;
-}
-
-function openItemDrawer(kind: string, id: string): void {
-  const data = state.data;
-  if (!data) return;
-  state.selected = null;
-  const skill = kind === "skill" ? data.skills.find((row) => row.id === id) : null;
-  const profile = kind === "profile" ? data.profiles.find((row) => row.id === id) : null;
-  const run = kind === "run" ? data.runs.find((row) => row.invocation_id === id) : null;
-  $("drawer-kicker").textContent = skill?.path || run?.outcome || kind;
-  $("drawer-title").textContent = skill?.name || profile?.name || run?.profile_id || id;
-  const body = skill?.body || profile?.body || (run ? renderRunBody(id) : "");
-  $("drawer-body").innerHTML = renderMarkdown(body);
-  $("drawer").hidden = false;
-}
-
-function openNodeDrawer(runId: string, index: number): void {
-  state.selected = { runId, index };
-  fillDrawer(runId, index);
-  $("drawer").hidden = false;
-}
-
-function openDrawerFromElement(button: HTMLElement): void {
-  const kind = button.dataset.kind || "";
-  if (kind === "start" || kind === "complete" || kind === "step") {
-    openNodeDrawer(String(button.dataset.run), Number(button.dataset.index));
-    return;
-  }
-  openItemDrawer(kind, String(button.dataset.id));
 }
 
 async function load(): Promise<void> {
@@ -179,6 +145,9 @@ function boot(): void {
 
   $("view").addEventListener("click", (event) => {
     const target = event.target as HTMLElement;
+    if (handleUpgradeClick(target, upgradeCtx)) {
+      return;
+    }
     const pageBtn = target.closest("[data-log-page]") as HTMLElement | null;
     if (pageBtn && !pageBtn.hasAttribute("disabled")) {
       state.logPage = Number(pageBtn.dataset.logPage);
@@ -189,7 +158,7 @@ function boot(): void {
     if (!button) {
       return;
     }
-    openDrawerFromElement(button);
+    openDrawerFromElement(drawerHost, button);
   });
 
   $("drawer-close").addEventListener("click", () => {
@@ -198,6 +167,7 @@ function boot(): void {
   });
 
   void tick();
+  bootUpgrade(upgradeCtx);
 }
 
 if (typeof document !== "undefined" && document.getElementById("view")) {

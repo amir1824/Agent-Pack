@@ -5,10 +5,12 @@ import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from agent_pack.dashboard.snapshot import build_snapshot
+from agent_pack.dashboard.upgrade_status import check_upgrade, clear_upgrade_cache
 from agent_pack.errors import PackError
+from agent_pack.sync import upgrade
 
 STATIC_TYPES = {
     "index.html": "text/html; charset=utf-8",
@@ -36,6 +38,18 @@ def allowed_hosts(port: int) -> frozenset[str]:
 
 def _static_bytes(name: str) -> bytes:
     return (files("agent_pack.dashboard") / "static" / name).read_bytes()
+
+
+def _content_length(raw: str | None) -> int | None:
+    if raw is None:
+        return 0
+    try:
+        length = int(raw)
+    except ValueError:
+        return None
+    if length < 0:
+        return None
+    return length
 
 
 def make_handler(root: Path) -> type[BaseHTTPRequestHandler]:
@@ -66,12 +80,49 @@ def make_handler(root: Path) -> type[BaseHTTPRequestHandler]:
                     return
                 self._send(200, "application/json", payload)
                 return
+            if route == "/api/upgrade-status":
+                query = parse_qs(urlparse(self.path).query)
+                force = query.get("force", [""])[0] in ("1", "true")
+                payload = json.dumps(check_upgrade(resolved, force=force)).encode("utf-8")
+                self._send(200, "application/json", payload)
+                return
             name = "index.html" if route in ("/", "/index.html") else route.lstrip("/")
             ctype = STATIC_TYPES.get(name)
             if ctype is None:
                 self._send(404, "text/plain; charset=utf-8", b"not found\n")
                 return
             self._send(200, ctype, _static_bytes(name))
+
+        def do_POST(self) -> None:
+            if not self._host_ok():
+                self._send(403, "text/plain; charset=utf-8", b"forbidden host\n")
+                return
+            route = unquote(urlparse(self.path).path)
+            if route != "/api/upgrade":
+                self._send(404, "text/plain; charset=utf-8", b"not found\n")
+                return
+            length = _content_length(self.headers.get("Content-Length"))
+            if length is None:
+                self._send(400, "application/json", json.dumps({"error": "invalid Content-Length"}).encode("utf-8"))
+                return
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                body = json.loads(raw.decode("utf-8") or "{}")
+            except json.JSONDecodeError:
+                self._send(400, "application/json", json.dumps({"error": "invalid json"}).encode("utf-8"))
+                return
+            tag = body.get("tag")
+            upgrade_tag = tag if isinstance(tag, str) and tag.strip() else None
+            try:
+                lock = upgrade(resolved, upgrade_tag)
+                clear_upgrade_cache(resolved)
+                payload = json.dumps(
+                    {"name": lock.name, "tag": lock.tag, "commit": lock.commit},
+                ).encode("utf-8")
+            except PackError as exc:
+                self._send(400, "application/json", json.dumps({"error": str(exc)}).encode("utf-8"))
+                return
+            self._send(200, "application/json", payload)
 
         def _send(self, code: int, ctype: str, body: bytes) -> None:
             self.send_response(code)

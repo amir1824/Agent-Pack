@@ -209,6 +209,26 @@ button:disabled {
   margin-top: 14px;
 }
 
+.upgrade-banner {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
+.upgrade-banner-error {
+  border-color: color-mix(in srgb, var(--clay) 45%, var(--line));
+}
+
+.upgrade-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.upgrade-run {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));

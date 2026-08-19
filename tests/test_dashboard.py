@@ -4,7 +4,7 @@ import io
 import json
 import threading
 from unittest.mock import patch
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from agent_pack.cli import main
 from agent_pack.dashboard.lifecycle import _pid_alive, kill_dashboard, meta_path, read_meta, start_dashboard
@@ -12,7 +12,8 @@ from agent_pack.dashboard.server import make_server
 from agent_pack.dashboard.snapshot import build_snapshot
 from agent_pack.log import list_runs
 from agent_pack.pack import init_pack
-from tests.test_cli import PackRepoTest
+from agent_pack.sync.lockfile import LOCKFILE_NAME
+from tests.test_cli import PackRepoTest, _commit_all, _git
 
 
 class DashboardTest(PackRepoTest):
@@ -56,6 +57,85 @@ class DashboardTest(PackRepoTest):
             self.assertIn("view-title", app_js)
             with urlopen(f"http://{host}:{port}/health") as resp:
                 self.assertEqual(resp.status, 204)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_api_upgrade_status_and_post(self) -> None:
+        pack, app = self._bound_app()
+        skill = pack / "skills" / "example" / "SKILL.md"
+        skill.write_text(
+            skill.read_text(encoding="utf-8").replace(
+                "Placeholder skill. Replace with a real team skill or delete this folder.",
+                "Placeholder skill v1.1.",
+            ),
+            encoding="utf-8",
+        )
+        _commit_all(pack, "feat: v1.1")
+        _git(pack, "tag", "v1.1.0")
+        server = make_server(app, 0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            host, port = server.server_address[:2]
+            with urlopen(f"http://{host}:{port}/api/upgrade-status?force=1") as resp:
+                status = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(status["available"])
+            self.assertEqual(status["current_tag"], "v1.0.0")
+            self.assertEqual(status["latest_tag"], "v1.1.0")
+            req = Request(
+                f"http://{host}:{port}/api/upgrade",
+                data=json.dumps({"tag": "v1.1.0"}).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urlopen(req) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(result["tag"], "v1.1.0")
+            lock = json.loads((app / LOCKFILE_NAME).read_text(encoding="utf-8"))
+            self.assertEqual(lock["tag"], "v1.1.0")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_api_upgrade_status_pack_only(self) -> None:
+        pack = self.root / "fresh"
+        init_pack(pack, "fresh")
+        server = make_server(pack, 0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            host, port = server.server_address[:2]
+            with urlopen(f"http://{host}:{port}/api/upgrade-status") as resp:
+                status = json.loads(resp.read().decode("utf-8"))
+            self.assertIsNone(status)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_api_upgrade_status_tag_moved(self) -> None:
+        pack, app = self._bound_app()
+        skill = pack / "skills" / "example" / "SKILL.md"
+        skill.write_text(
+            skill.read_text(encoding="utf-8").replace(
+                "Write the playbook the agent should follow.",
+                "Updated playbook for moved tag.",
+            ),
+            encoding="utf-8",
+        )
+        _commit_all(pack, "feat: move v1.0.0")
+        _git(pack, "tag", "-f", "v1.0.0")
+        server = make_server(app, 0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            host, port = server.server_address[:2]
+            with urlopen(f"http://{host}:{port}/api/upgrade-status?force=1") as resp:
+                status = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(status["available"])
+            self.assertTrue(status["tag_moved"])
+            self.assertEqual(status["current_tag"], "v1.0.0")
+            self.assertEqual(status["latest_tag"], "v1.0.0")
         finally:
             server.shutdown()
             server.server_close()
