@@ -6,8 +6,8 @@ from pathlib import Path
 
 import yaml
 
-from agent_pack.lockfile import Lockfile
-from agent_pack.source import AGENTS_MD, CONSTITUTION_MD, load_yaml_mapping, sha256_file
+from agent_pack.pack import AGENTS_MD, CONSTITUTION_MD, load_yaml_mapping, safe_dest, sha256_file
+from agent_pack.sync.lockfile import Lockfile
 
 SKILL_PREFIX = ".agents/skills/"
 PROFILE_PREFIX = ".agents/profiles/"
@@ -57,7 +57,7 @@ def _replace_dest(dest: Path, payload: Path | str) -> None:
 def install_projections(app_root: Path, rel: str, src: Path) -> dict[str, str]:
     written: dict[str, str] = {}
     for host_rel in projected_paths(rel):
-        dest = app_root / host_rel
+        dest = safe_dest(app_root, host_rel)
         payload: Path | str = render_claude_agent(src) if rel.startswith(PROFILE_PREFIX) else src
         _replace_dest(dest, payload)
         written[host_rel] = sha256_file(dest)

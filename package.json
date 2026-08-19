@@ -1,0 +1,13 @@
+{
+  "name": "agent-pack-dashboard",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && node scripts/build-dashboard.mjs",
+    "build:watch": "node scripts/build-dashboard.mjs --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.8.2"
+  }
+}

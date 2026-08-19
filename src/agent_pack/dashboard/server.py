@@ -16,6 +16,23 @@ STATIC_TYPES = {
     "app.js": "text/javascript; charset=utf-8",
 }
 
+# index.html pulls IBM Plex from Google Fonts; everything else must come from us.
+CSP = (
+    "default-src 'none'; "
+    "script-src 'self'; "
+    "style-src 'self' https://fonts.googleapis.com; "
+    "font-src https://fonts.gstatic.com; "
+    "connect-src 'self'; "
+    "img-src 'self' data:; "
+    "base-uri 'none'; "
+    "form-action 'none'; "
+    "frame-ancestors 'none'"
+)
+
+
+def allowed_hosts(port: int) -> frozenset[str]:
+    return frozenset({f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"})
+
 
 def _static_bytes(name: str) -> bytes:
     return (files("agent_pack.dashboard") / "static" / name).read_bytes()
@@ -28,7 +45,15 @@ def make_handler(root: Path) -> type[BaseHTTPRequestHandler]:
         def log_message(self, format: str, *args: object) -> None:
             return
 
+        def _host_ok(self) -> bool:
+            """Without this, any web page can reach this server via DNS rebinding."""
+            bound = self.server.server_address[1]
+            return (self.headers.get("Host") or "").strip().lower() in allowed_hosts(bound)
+
         def do_GET(self) -> None:
+            if not self._host_ok():
+                self._send(403, "text/plain; charset=utf-8", b"forbidden host\n")
+                return
             route = unquote(urlparse(self.path).path)
             if route == "/health":
                 self._send(204, "text/plain; charset=utf-8", b"")
@@ -53,6 +78,9 @@ def make_handler(root: Path) -> type[BaseHTTPRequestHandler]:
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Security-Policy", CSP)
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
             self.end_headers()
             self.wfile.write(body)
 

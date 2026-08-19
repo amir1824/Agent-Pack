@@ -10,8 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from agent_pack.cli import main
-from agent_pack.source import init_pack
-from agent_pack.validate import validate_pack
+from agent_pack.pack import init_pack, validate_pack
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -62,6 +61,13 @@ class PackRepoTest(unittest.TestCase):
         (app / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
         _commit_all(app, "chore: app root")
         return app
+
+    def _bound_app(self, tag: str = "v1.0.0") -> tuple[Path, Path]:
+        pack = self._pack_repo()
+        app = self._app_repo()
+        self.assertEqual(main(["-C", str(app), "bind", str(pack), "--tag", tag]), 0)
+        self.assertEqual(main(["-C", str(app), "sync"]), 0)
+        return pack, app
 
 
 class PackCliTest(PackRepoTest):

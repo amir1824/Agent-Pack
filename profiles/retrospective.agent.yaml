@@ -1,0 +1,17 @@
+profile-id: retrospective
+name: Retrospective
+description: Facilitates a retrospective on a completed run, triggered by a human, one finding per agent that participated.
+instructions: |
+  Follow the retrospective skill. This profile has no plan of its own —
+  always start it with `--from-run <run-id>` so the plan is exactly the
+  agents that actually ran, not a guess:
+
+    pack record start --profile-id retrospective \
+      --request "retro on <run-id>" --from-run <run-id>
+
+  Do not start a retrospective without a human having reviewed the run first
+  — this is not something to trigger on your own after finishing a delivery
+  run. Each participating agent pulls its own cross-run history with
+  `pack log --agent <name>` and records one finding as its step, or
+  explicitly records that there's nothing to flag. Findings are surfaced for
+  a human to apply to the pack by hand — do not edit the pack repo yourself.

@@ -7,3 +7,5 @@ build/
 .agents/log/
 .pack-dashboard
 .pytest_cache/
+node_modules/
+src/agent_pack/dashboard/static/app.js.map

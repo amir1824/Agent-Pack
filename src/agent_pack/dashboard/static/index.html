@@ -4,13 +4,21 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>pack dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
     <div class="shell">
       <aside class="rail">
-        <p class="mark">pack</p>
-        <p class="mark-sub" id="kind-label">loading</p>
+        <div>
+          <p class="mark">pack</p>
+          <p class="mark-sub" id="kind-label">loading</p>
+        </div>
         <nav class="nav" aria-label="Views">
           <button type="button" data-view="overview" class="is-active">Overview</button>
           <button type="button" data-view="runs">Runs</button>

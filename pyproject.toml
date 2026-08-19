@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "agent-pack"
 version = "0.1.0"
 description = "Bind one agent-pack git repo to an app and sync skills as real md/yaml files"
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = ["pyyaml>=6.0"]
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent_pack.errors import PackError
-from agent_pack.source import (
+from agent_pack.pack.source import (
     AGENTS_MD,
     CONSTITUTION_MD,
     PACK_YAML,
@@ -61,13 +61,13 @@ def _validate_skill(pack_root: Path, skill_md: Path) -> tuple[str, list[str]]:
     return name, errors
 
 
-def _validate_profile(pack_root: Path, path: Path) -> tuple[str, list[str]]:
+def _validate_profile(pack_root: Path, path: Path) -> tuple[str, tuple[str, ...], list[str]]:
     errors: list[str] = []
     rel = posix_rel(pack_root, path)
     try:
         data = load_yaml_mapping(path)
     except PackError as exc:
-        return "", [str(exc)]
+        return "", (), [str(exc)]
     profile_id = str(data.get("profile-id") or "")
     expected = path.name[: -len(".agent.yaml")]
     if not profile_id:
@@ -78,7 +78,20 @@ def _validate_profile(pack_root: Path, path: Path) -> tuple[str, list[str]]:
         errors.append(f"{rel}: name is required")
     if not str(data.get("description") or "").strip():
         errors.append(f"{rel}: description is required")
-    return profile_id, errors
+    plan_raw = data.get("plan")
+    plan: tuple[str, ...] = ()
+    if plan_raw is not None:
+        if not isinstance(plan_raw, list) or not plan_raw:
+            errors.append(f"{rel}: plan must be a non-empty list of step names")
+        else:
+            items = [str(item).strip() for item in plan_raw]
+            if any(not item for item in items):
+                errors.append(f"{rel}: plan entries must not be empty")
+            elif len(set(items)) != len(items):
+                errors.append(f"{rel}: plan entries must be unique")
+            else:
+                plan = tuple(items)
+    return profile_id, plan, errors
 
 
 def _unique(errors: list[str], seen: dict[str, str], key: str, rel: str, label: str) -> None:
@@ -121,13 +134,23 @@ def validate_pack(pack_root: Path) -> list[str]:
             _unique(errors, skill_ids, skill_id, posix_rel(pack_root, skill_md), "skill id")
 
     profile_ids: dict[str, str] = {}
+    plans: list[tuple[str, tuple[str, ...]]] = []
     profile_dir = pack_root / "profiles"
     yaml_profiles = sorted(profile_dir.glob("*.agent.yaml")) if profile_dir.is_dir() else []
     for path in yaml_profiles:
-        profile_id, profile_errors = _validate_profile(pack_root, path)
+        profile_id, plan, profile_errors = _validate_profile(pack_root, path)
         errors.extend(profile_errors)
         if profile_id:
             _unique(errors, profile_ids, profile_id, posix_rel(pack_root, path), "profile-id")
+            rel = posix_rel(pack_root, path)
+            plans.append((rel, plan))
+
+    # A plan names other agents by their profile-id — if the id doesn't exist,
+    # "each agent's log" (steps grouped by name) silently loses that agent.
+    for rel, plan in plans:
+        for step in plan:
+            if step not in profile_ids:
+                errors.append(f"{rel}: plan step {step!r} does not match any profile-id in profiles/")
     return errors
 
 

@@ -5,14 +5,23 @@ import json
 import sys
 from pathlib import Path
 
-from agent_pack.consumer import bind, diff, format_status, status, sync, upgrade
 from agent_pack.dashboard.lifecycle import kill_dashboard, start_dashboard
 from agent_pack.dashboard.snapshot import build_snapshot
 from agent_pack.errors import CheckFailed, PackError
-from agent_pack.log import OUTCOMES, format_log, record_complete, record_start
-from agent_pack.source import init_pack
+from agent_pack.log import (
+    OUTCOMES,
+    STEP_STATUSES,
+    export_agent_log,
+    export_log,
+    format_agent_log,
+    format_log,
+    record_complete,
+    record_start,
+    record_step,
+)
+from agent_pack.pack import init_pack, validate_pack
+from agent_pack.sync import bind, diff, format_status, status, sync, upgrade
 from agent_pack.target import resolve_target
-from agent_pack.validate import validate_pack
 
 
 def _take_globals(argv: list[str]) -> tuple[str | None, str | None, list[str]]:
@@ -69,7 +78,12 @@ def _parser() -> argparse.ArgumentParser:
     bind_p.add_argument("--name", default="pack", help="lockfile name (default: pack)")
     bind_p.add_argument("--tag", default=None, help="pack tag to pin (default: latest tag)")
 
-    sub.add_parser("sync", help="copy pack into .agents/ and host Cursor/Claude paths")
+    sync_p = sub.add_parser("sync", help="copy pack into .agents/ and host Cursor/Claude paths")
+    sync_p.add_argument(
+        "--allow-tag-move",
+        action="store_true",
+        help="accept a pinned tag that now points at a different commit",
+    )
     sub.add_parser("status", help="show name, url, tag, dirty vs lock")
     sub.add_parser("check", help="status, exit 1 if dirty or not synced")
     sub.add_parser("diff", help="diff .agents/ against the locked tag")
@@ -79,12 +93,34 @@ def _parser() -> argparse.ArgumentParser:
 
     log_p = sub.add_parser("log", help="print the run log table")
     log_p.add_argument("-n", "--limit", type=int, default=20, help="max rows (default: 20)")
+    log_p.add_argument(
+        "--agent",
+        default=None,
+        help="show this step name's history across every run, not the per-run table",
+    )
+    log_p.add_argument(
+        "--export",
+        dest="export_path",
+        default=None,
+        help="write the runs (or, with --agent, that agent's steps) as JSON to this path",
+    )
 
     record_p = sub.add_parser("record", help="write a run-log event")
     record_sub = record_p.add_subparsers(dest="record_command", required=True)
     start_p = record_sub.add_parser("start", help="write a started event")
     start_p.add_argument("--profile-id", required=True, help="profile that is running")
     start_p.add_argument("--request", required=True, help="request text")
+    start_p.add_argument(
+        "--plan",
+        default="",
+        help="comma-separated step names; default: the profile's own `plan` (e.g. product,designer,qa)",
+    )
+    start_p.add_argument(
+        "--from-run",
+        dest="from_run",
+        default=None,
+        help="derive the plan from who actually participated in a prior run (e.g. a retrospective)",
+    )
     complete_p = record_sub.add_parser("complete", help="write a completed event")
     complete_p.add_argument("--id", dest="invocation_id", required=True, help="id from pack record start")
     complete_p.add_argument(
@@ -92,6 +128,21 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         choices=OUTCOMES,
         help="run outcome",
+    )
+    complete_p.add_argument(
+        "--force",
+        action="store_true",
+        help="complete as done even if a planned step never finished",
+    )
+    step_p = record_sub.add_parser("step", help="write a checkpoint on an open run")
+    step_p.add_argument("--id", dest="invocation_id", required=True, help="id from pack record start")
+    step_p.add_argument("--name", required=True, help="checkpoint name")
+    step_p.add_argument("--status", required=True, choices=STEP_STATUSES, help="started, done, or failed")
+    step_p.add_argument("--detail", default="", help="optional note")
+    step_p.add_argument(
+        "--force",
+        action="store_true",
+        help="record a step name outside the run's plan",
     )
 
     dash = sub.add_parser("dashboard", help="open the local pack dashboard")
@@ -110,12 +161,12 @@ def _run(args: argparse.Namespace) -> str:
         "init": lambda: _init(root, args.pack_name),
         "validate": lambda: _validate(root),
         "bind": lambda: _bind(root, args),
-        "sync": lambda: _sync(root),
+        "sync": lambda: _sync(root, args.allow_tag_move),
         "status": lambda: format_status(status(root)),
         "check": lambda: _check(root),
         "diff": lambda: diff(root),
         "upgrade": lambda: _upgrade(root, args.tag),
-        "log": lambda: format_log(root, args.limit),
+        "log": lambda: _log(root, args),
         "record": lambda: _record(root, args),
         "dashboard": lambda: _dashboard(root, args),
     }
@@ -143,8 +194,8 @@ def _bind(root: Path, args: argparse.Namespace) -> str:
     return f"bound {lock.name} -> {lock.source}@{lock.tag} ({lock.commit[:12]})\n"
 
 
-def _sync(root: Path) -> str:
-    lock = sync(root)
+def _sync(root: Path, allow_tag_move: bool = False) -> str:
+    lock = sync(root, allow_tag_move=allow_tag_move)
     return f"synced {lock.name}@{lock.tag} ({len(lock.files)} files)\n"
 
 
@@ -161,10 +212,31 @@ def _check(root: Path) -> str:
     return text
 
 
+def _log(root: Path, args: argparse.Namespace) -> str:
+    if args.agent:
+        if args.export_path:
+            content, count = export_agent_log(root, args.agent)
+            Path(args.export_path).write_text(content, encoding="utf-8")
+            return f"exported {count} step(s) for {args.agent!r} to {args.export_path}\n"
+        return format_agent_log(root, args.agent, args.limit)
+    if args.export_path:
+        content, count = export_log(root)
+        Path(args.export_path).write_text(content, encoding="utf-8")
+        return f"exported {count} run(s) to {args.export_path}\n"
+    return format_log(root, args.limit)
+
+
 def _record(root: Path, args: argparse.Namespace) -> str:
     if args.record_command == "start":
-        return record_start(root, args.profile_id, args.request)
-    return record_complete(root, args.invocation_id, args.outcome)
+        plan = (
+            tuple(dict.fromkeys(part.strip() for part in args.plan.split(",") if part.strip()))
+            if args.plan
+            else ()
+        )
+        return record_start(root, args.profile_id, args.request, plan, from_run=args.from_run) + "\n"
+    if args.record_command == "step":
+        return record_step(root, args.invocation_id, args.name, args.status, args.detail, force=args.force) + "\n"
+    return record_complete(root, args.invocation_id, args.outcome, force=args.force) + "\n"
 
 
 def _dashboard(root: Path, args: argparse.Namespace) -> str:

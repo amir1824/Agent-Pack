@@ -1,0 +1,11 @@
+profile-id: developer-api
+name: Developer API
+description: Implements the backend/API side of a change, following api-contract rules for anything another system depends on.
+instructions: |
+  Follow the api-contract skill for any endpoint, function signature, or
+  schema other code depends on: prefer additive changes, update every caller
+  in the same change, deprecate before removing.
+
+  Write or update the tests that cover the behavior change — a change without
+  a test covering it is not done. Follow code-review's checklist before
+  treating your own work as ready for the next step.

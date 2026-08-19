@@ -6,23 +6,22 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent_pack.adapters import install_projections, upsert_root_agents_md
 from agent_pack.errors import PackError
-from agent_pack.gitutil import commit_sha, fetch_pack, latest_tag
-from agent_pack.lockfile import Lockfile, lockfile_path, read_lockfile, write_lockfile
-from agent_pack.log import ensure_log_scaffold
-from agent_pack.source import consumer_rel, iter_pack_files, sha256_file
-from agent_pack.validate import require_valid_pack
+from agent_pack.git import commit_sha, fetch_pack, latest_tag, validate_source
+from agent_pack.log.scaffold import ensure_log_scaffold
+from agent_pack.pack import consumer_rel, iter_pack_files, require_valid_pack, safe_dest, sha256_file
+from agent_pack.sync.adapters import install_projections, upsert_root_agents_md
+from agent_pack.sync.gitignore import GITIGNORE_RULE, ensure_gitignore
+from agent_pack.sync.lockfile import Lockfile, lockfile_path, read_lockfile, write_lockfile
 
 AGENTS_DIR = ".agents"
-GITIGNORE_RULE = ".agents/log/"
 
 
 def _normalize_source(url: str) -> str:
     path = Path(url).expanduser()
     if path.exists():
         return str(path.resolve())
-    return url
+    return validate_source(url)
 
 
 def _copy_file(src: Path, dest: Path) -> None:
@@ -36,20 +35,6 @@ def _copy_file(src: Path, dest: Path) -> None:
     except OSError:
         tmp.unlink(missing_ok=True)
         raise
-
-
-def ensure_gitignore(app_root: Path, rule: str = GITIGNORE_RULE) -> None:
-    path = app_root / ".gitignore"
-    if not path.exists():
-        path.write_text(rule + "\n", encoding="utf-8")
-        return
-    text = path.read_text(encoding="utf-8")
-    existing = {line.strip() for line in text.splitlines()}
-    if rule in existing or rule.rstrip("/") in existing:
-        return
-    if text and not text.endswith("\n"):
-        text += "\n"
-    path.write_text(text + rule + "\n", encoding="utf-8")
 
 
 def bind(app_root: Path, git_url: str, name: str, tag: str | None) -> Lockfile:
@@ -71,16 +56,30 @@ def bind(app_root: Path, git_url: str, name: str, tag: str | None) -> Lockfile:
     return lock
 
 
-def sync(app_root: Path, tag: str | None = None) -> Lockfile:
+def _require_stable_pin(lock: Lockfile, resolved_tag: str, sha: str) -> None:
+    """Git tags are mutable. A moved tag silently swaps agent instructions, so refuse it."""
+    if resolved_tag != lock.tag or not lock.commit or sha == lock.commit:
+        return
+    raise PackError(
+        f"pinned tag {lock.tag} moved: lockfile has {lock.commit[:12]}, "
+        f"{lock.source} now resolves to {sha[:12]}.\n"
+        "  Nothing was copied. Inspect with pack diff, then accept with\n"
+        f"  pack upgrade --tag {lock.tag}  (or pack sync --allow-tag-move)"
+    )
+
+
+def sync(app_root: Path, tag: str | None = None, *, allow_tag_move: bool = False) -> Lockfile:
     lock = read_lockfile(app_root)
     resolved_tag = tag or lock.tag
     checkout = fetch_pack(lock.source, resolved_tag)
     require_valid_pack(checkout)
     sha = commit_sha(checkout, "HEAD")
+    if not allow_tag_move:
+        _require_stable_pin(lock, resolved_tag, sha)
     copied: dict[str, str] = {}
     for src in iter_pack_files(checkout):
         rel = consumer_rel(src, checkout)
-        dest = app_root / rel
+        dest = safe_dest(app_root, rel)
         _copy_file(src, dest)
         copied[rel] = sha256_file(dest)
         copied.update(install_projections(app_root, rel, dest))
@@ -113,17 +112,21 @@ class Status:
 
     @property
     def dirty(self) -> bool:
-        return bool(self.modified or self.missing or self.extra or not self.synced)
+        # `extra` is content the consumer added on top of the pack (their own skills,
+        # host-only files, etc). That is the point of an app repo, not drift — so it
+        # does not fail `pack check`. Only a changed or missing pack-managed file does.
+        return bool(self.modified or self.missing or not self.synced)
 
 
 def _agents_tracked_files(app_root: Path) -> set[str]:
     agents = app_root / AGENTS_DIR
     if not agents.is_dir():
         return set()
+    ignore_prefix = GITIGNORE_RULE.rstrip("/") + "/"
     return {
         path.relative_to(app_root).as_posix()
         for path in agents.rglob("*")
-        if path.is_file() and not path.relative_to(app_root).as_posix().startswith(".agents/log/")
+        if path.is_file() and not path.relative_to(app_root).as_posix().startswith(ignore_prefix)
     }
 
 
@@ -156,10 +159,7 @@ def format_status(report: Status) -> str:
     if not report.synced:
         lines.append("state: not synced")
         return "\n".join(lines) + "\n"
-    if not report.dirty:
-        lines.append("state: clean")
-        return "\n".join(lines) + "\n"
-    lines.append("state: dirty")
+    lines.append("state: dirty" if report.dirty else "state: clean")
     for rel in report.modified:
         lines.append(f"  modified: {rel}")
     for rel in report.missing:
@@ -173,7 +173,13 @@ def diff(app_root: Path) -> str:
     lock = read_lockfile(app_root)
     checkout = fetch_pack(lock.source, lock.tag)
     require_valid_pack(checkout)
+    sha = commit_sha(checkout, "HEAD")
     chunks: list[str] = []
+    if lock.commit and sha != lock.commit:
+        chunks.append(
+            f"# warning: tag {lock.tag} moved {lock.commit[:12]} -> {sha[:12]}; "
+            "diffing against the new commit\n"
+        )
     pack_files = {consumer_rel(src, checkout): src for src in iter_pack_files(checkout)}
     local_files = _agents_tracked_files(app_root)
     names = sorted(set(pack_files) | local_files)
@@ -188,11 +194,11 @@ def diff(app_root: Path) -> str:
         to_file = f"b/{rel}" if dest.is_file() else "/dev/null"
         rendered = difflib.unified_diff(left, right, fromfile=from_file, tofile=to_file)
         chunks.append("".join(rendered))
-    if not chunks:
-        return "no differences\n"
+    if len(chunks) == (1 if lock.commit and sha != lock.commit else 0):
+        return "".join(chunks) + "no differences\n"
     return "".join(chunks)
 
 
 def upgrade(app_root: Path, tag: str | None) -> Lockfile:
     lock = read_lockfile(app_root)
-    return sync(app_root, tag or latest_tag(lock.source))
+    return sync(app_root, tag or latest_tag(lock.source), allow_tag_move=True)

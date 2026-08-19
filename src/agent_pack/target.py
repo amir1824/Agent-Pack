@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agent_pack.errors import PackError
-from agent_pack.gitutil import clone, repo_basename
+from agent_pack.git import clone, repo_basename, validate_source
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,7 @@ def resolve_target(directory: str | None, repo: str | None, *, create: bool = Fa
             raise PackError(f"directory not found: {root}")
         return Target(root)
     if repo:
+        repo = validate_source(repo)
         dest = Path.cwd() / repo_basename(repo)
         if not dest.exists():
             clone(repo, dest)

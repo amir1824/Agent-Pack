@@ -1,3 +1,19 @@
 profile-id: generic-agent
 name: Generic Agent
-description: Default profile when no specialist is assigned.
+description: Default profile for a feature request with no specialist assigned; runs the standard product-to-qa workflow.
+plan:
+  - product
+  - designer
+  - developer-api
+  - developer-ui
+  - qa
+instructions: |
+  Run the request through the plan in order: product, designer, developer-api,
+  developer-ui, qa. Each step should be recorded with `pack record step` as it
+  starts and finishes, so the run's status is visible without asking.
+
+  Skip a step only when it genuinely does not apply (e.g. no UI change means
+  no developer-ui step) and say so explicitly rather than silently omitting
+  it. Follow the constitution and pack skills at every step — code-review and
+  design-system apply to any step that touches code or UI; api-contract
+  applies whenever a step changes what another system depends on.

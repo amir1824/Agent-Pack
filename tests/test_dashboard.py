@@ -10,21 +10,12 @@ from agent_pack.cli import main
 from agent_pack.dashboard.lifecycle import _pid_alive, kill_dashboard, meta_path, read_meta, start_dashboard
 from agent_pack.dashboard.server import make_server
 from agent_pack.dashboard.snapshot import build_snapshot
-from agent_pack.source import init_pack
+from agent_pack.log import list_runs
+from agent_pack.pack import init_pack
 from tests.test_cli import PackRepoTest
 
 
 class DashboardTest(PackRepoTest):
-    def test_snapshot_pack_source(self) -> None:
-        pack = self.root / "fresh"
-        init_pack(pack, "fresh")
-        snap = build_snapshot(pack)
-        self.assertEqual(snap["kind"], "pack")
-        self.assertEqual(snap["pack"]["errors"], [])
-        self.assertIn("example", [item["id"] for item in snap["skills"]])
-        self.assertIn("generic-agent", [item["id"] for item in snap["profiles"]])
-        self.assertIn("# Constitution", snap["constitution"])
-
     def test_snapshot_consumer_with_run(self) -> None:
         pack = self._pack_repo()
         app = self._app_repo()
@@ -41,15 +32,6 @@ class DashboardTest(PackRepoTest):
         self.assertEqual(snap["runs"][0]["outcome"], "done")
         self.assertTrue(any(item["path"].startswith(".agents/skills/") for item in snap["skills"]))
         self.assertTrue(any(row["path"].startswith(".cursor/skills/") for row in snap["projections"]))
-
-    def test_dashboard_json(self) -> None:
-        pack = self.root / "fresh"
-        init_pack(pack, "fresh")
-        with patch("sys.stdout", new=io.StringIO()) as out:
-            self.assertEqual(main(["-C", str(pack), "dashboard", "--json"]), 0)
-            data = json.loads(out.getvalue())
-        self.assertEqual(data["kind"], "pack")
-        self.assertEqual(data["name"], "fresh")
 
     def test_api_snapshot(self) -> None:
         pack = self.root / "fresh"
@@ -97,16 +79,116 @@ class DashboardTest(PackRepoTest):
         finally:
             kill_dashboard(pack)
 
-    def test_kill_when_not_running(self) -> None:
+    def test_pack_source_record_steps_and_json(self) -> None:
         pack = self.root / "fresh"
         init_pack(pack, "fresh")
         with patch("sys.stdout", new=io.StringIO()) as out:
-            self.assertEqual(main(["-C", str(pack), "dashboard", "--kill"]), 0)
-            self.assertEqual(out.getvalue(), "not running\n")
+            self.assertEqual(
+                main(
+                    [
+                        "-C",
+                        str(pack),
+                        "record",
+                        "start",
+                        "--profile-id",
+                        "generic-agent",
+                        "--request",
+                        "ship the login",
+                    ]
+                ),
+                0,
+            )
+            invocation_id = out.getvalue().strip()
+        self.assertEqual(
+            main(
+                [
+                    "-C",
+                    str(pack),
+                    "record",
+                    "step",
+                    "--id",
+                    invocation_id,
+                    "--name",
+                    "charter",
+                    "--status",
+                    "started",
+                ]
+            ),
+            0,
+        )
+        self.assertEqual(
+            main(
+                [
+                    "-C",
+                    str(pack),
+                    "record",
+                    "step",
+                    "--id",
+                    invocation_id,
+                    "--name",
+                    "charter",
+                    "--status",
+                    "done",
+                ]
+            ),
+            0,
+        )
+        self.assertEqual(
+            main(
+                [
+                    "-C",
+                    str(pack),
+                    "record",
+                    "step",
+                    "--id",
+                    invocation_id,
+                    "--name",
+                    "specify",
+                    "--status",
+                    "started",
+                ]
+            ),
+            0,
+        )
 
-    def test_neither_pack_nor_lock(self) -> None:
-        empty = self.root / "empty"
-        empty.mkdir()
-        with patch("sys.stderr", new=io.StringIO()) as err:
-            self.assertEqual(main(["-C", str(empty), "dashboard", "--json"]), 1)
-            self.assertIn("not a pack repo and not bound", err.getvalue())
+        runs = list_runs(pack)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0].outcome, "open")
+        self.assertEqual([step["name"] for step in runs[0].steps], ["charter", "specify"])
+        self.assertEqual(runs[0].steps[0]["status"], "done")
+        self.assertEqual(runs[0].steps[1]["status"], "started")
+        with patch("sys.stdout", new=io.StringIO()) as out:
+            self.assertEqual(main(["-C", str(pack), "dashboard", "--json"]), 0)
+            data = json.loads(out.getvalue())
+        self.assertEqual(data["runs"][0]["steps"][0]["status"], "done")
+        self.assertEqual(data["runs"][0]["steps"][1]["name"], "specify")
+        gitignore = (pack / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn(".agents/log/", gitignore)
+        with patch("sys.stdout", new=io.StringIO()) as out:
+            self.assertEqual(main(["-C", str(pack), "log"]), 0)
+            self.assertIn("generic-agent", out.getvalue())
+        self.assertEqual(
+            main(["-C", str(pack), "record", "complete", "--id", invocation_id, "--outcome", "done"]),
+            0,
+        )
+        self.assertEqual(list_runs(pack)[0].outcome, "done")
+        with patch("sys.stderr", new=io.StringIO()):
+            self.assertEqual(
+                main(
+                    [
+                        "-C",
+                        str(pack),
+                        "record",
+                        "step",
+                        "--id",
+                        invocation_id,
+                        "--name",
+                        "late",
+                        "--status",
+                        "done",
+                    ]
+                ),
+                1,
+            )
+
+

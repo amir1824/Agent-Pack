@@ -103,6 +103,15 @@ def posix_rel(root: Path, path: Path) -> str:
     return path.relative_to(root).as_posix()
 
 
+def safe_dest(app_root: Path, rel: str) -> Path:
+    """Pack content decides these paths; never let one escape the consumer root."""
+    root = app_root.resolve()
+    dest = (root / rel).resolve()
+    if dest != root and root not in dest.parents:
+        raise PackError(f"refusing to write outside the app root: {rel}")
+    return app_root / rel
+
+
 def _is_sync_file(path: Path) -> bool:
     return path.is_file() and path.suffix in SYNC_SUFFIXES
 
@@ -127,7 +136,10 @@ def consumer_rel(pack_file: Path, pack_root: Path) -> str:
 
 
 def load_yaml_mapping(path: Path) -> dict[object, object]:
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    try:
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        raise PackError(f"{path.name}: invalid YAML: {exc}") from exc
     if not isinstance(loaded, dict):
         raise PackError(f"{posix_rel(path.parent, path)}: expected a YAML mapping")
     return loaded

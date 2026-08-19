@@ -2,20 +2,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_pack.adapters import projected_paths
-from agent_pack.consumer import Status, status
 from agent_pack.errors import PackError
-from agent_pack.lockfile import LOCKFILE_NAME, lockfile_path
 from agent_pack.log import list_runs
-from agent_pack.source import (
+from agent_pack.log.parse import parse_plan
+from agent_pack.pack import (
     CONSTITUTION_MD,
     PACK_YAML,
     load_yaml_mapping,
     pack_yaml_path,
     parse_frontmatter,
     posix_rel,
+    validate_pack,
 )
-from agent_pack.validate import validate_pack
+from agent_pack.sync import Status, status
+from agent_pack.sync.adapters import projected_paths
+from agent_pack.sync.lockfile import LOCKFILE_NAME, lockfile_path
 
 COUNT_KEYS = ("open", "done", "failed", "abandoned")
 
@@ -66,11 +67,11 @@ def _skills(root: Path, base: Path) -> list[dict[str, str]]:
     return items
 
 
-def _profiles(root: Path, base: Path) -> list[dict[str, str]]:
+def _profiles(root: Path, base: Path) -> list[dict[str, object]]:
     profiles_dir = base / "profiles"
     if not profiles_dir.is_dir():
         return []
-    items: list[dict[str, str]] = []
+    items: list[dict[str, object]] = []
     for path in sorted(profiles_dir.glob("*.agent.yaml")):
         try:
             data = load_yaml_mapping(path)
@@ -83,6 +84,7 @@ def _profiles(root: Path, base: Path) -> list[dict[str, str]]:
                 "name": str(data.get("name") or profile_id).strip(),
                 "description": str(data.get("description") or "").strip(),
                 "instructions": str(data.get("instructions") or "").strip(),
+                "plan": list(parse_plan(data.get("plan"))),
                 "path": posix_rel(root, path),
                 "body": _read(path),
             }
@@ -133,7 +135,9 @@ def _projections(root: Path, report: Status) -> list[dict[str, object]]:
     ]
 
 
-def _counts(skills: list[dict[str, str]], profiles: list[dict[str, str]], runs: list[dict[str, str | None]]) -> dict[str, int]:
+def _counts(
+    skills: list[dict[str, str]], profiles: list[dict[str, object]], runs: list[dict[str, object]]
+) -> dict[str, int]:
     counts = {"skills": len(skills), "profiles": len(profiles), **{key: 0 for key in COUNT_KEYS}}
     for run in runs:
         outcome = run.get("outcome")

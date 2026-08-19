@@ -12,7 +12,7 @@ from typing import NoReturn
 from urllib.error import URLError
 from urllib.request import urlopen
 
-from agent_pack.consumer import ensure_gitignore
+from agent_pack.sync import ensure_gitignore
 from agent_pack.dashboard.snapshot import build_snapshot
 from agent_pack.errors import PackError
 
@@ -65,6 +65,24 @@ def write_meta(root: Path, url: str, port: int, pid: int) -> None:
     meta_path(root).write_text(f"{url}\n{port}\n{pid}\n", encoding="utf-8")
 
 
+def _cmdline(pid: int) -> str:
+    try:
+        return subprocess.check_output(
+            ["ps", "-ww", "-p", str(pid), "-o", "command="],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+
+
+def _ours(pid: int, root: Path) -> bool:
+    if pid <= 1:
+        return False
+    cmd = _cmdline(pid)
+    return "agent_pack.dashboard.server" in cmd and str(root.resolve()) in cmd
+
+
 def _pid_alive(pid: int) -> bool:
     try:
         waited, _status = os.waitpid(pid, os.WNOHANG)
@@ -112,7 +130,7 @@ def _clear_stale(root: Path) -> None:
         meta_path(root).unlink(missing_ok=True)
         return
     _url, _port, pid = meta
-    if _pid_alive(pid):
+    if _ours(pid, root) and _pid_alive(pid):
         _stop_pid(pid)
     meta_path(root).unlink(missing_ok=True)
 
@@ -122,7 +140,7 @@ def running(root: Path) -> tuple[str, int, int] | None:
     if meta is None:
         return None
     url, _port, pid = meta
-    if _pid_alive(pid) and _healthy(url):
+    if _ours(pid, root) and _pid_alive(pid) and _healthy(url):
         return meta
     return None
 
@@ -133,7 +151,8 @@ def kill_dashboard(root: Path) -> str:
         meta_path(root).unlink(missing_ok=True)
         return "not running\n"
     _url, _port, pid = meta
-    _stop_pid(pid)
+    if _ours(pid, root) and _pid_alive(pid):
+        _stop_pid(pid)
     meta_path(root).unlink(missing_ok=True)
     return "stopped\n"
 
@@ -151,7 +170,7 @@ def _spawn(root: Path, port: int) -> subprocess.Popen[bytes]:
         [sys.executable, "-m", "agent_pack.dashboard.server", str(root.resolve()), str(port)],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
         start_new_session=True,
         env=_child_env(),
     )
@@ -159,8 +178,7 @@ def _spawn(root: Path, port: int) -> subprocess.Popen[bytes]:
 
 def _fail_start(proc: subprocess.Popen[bytes]) -> NoReturn:
     proc.kill()
-    err = proc.stderr.read().decode("utf-8", errors="replace").strip() if proc.stderr else ""
-    raise PackError(f"dashboard failed to start{': ' + err if err else ''}")
+    raise PackError("dashboard failed to start")
 
 
 def start_dashboard(root: Path, port: int | None, open_browser: bool) -> str:

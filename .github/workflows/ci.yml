@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Configure git for tests
+        run: |
+          git config --global user.email "ci@agent-pack.test"
+          git config --global user.name "agent-pack ci"
+
+      - name: Test
+        run: python -m pytest -q
+
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: npm ci
+
+      # static/app.js is committed so runtime needs no Node; make sure it matches the TS.
+      - name: Build and check the committed bundle is current
+        run: |
+          npm run build
+          git diff --exit-code src/agent_pack/dashboard/static/app.js
