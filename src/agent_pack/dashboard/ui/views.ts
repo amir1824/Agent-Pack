@@ -42,8 +42,7 @@ export function renderOverview(data: Snapshot): string {
   return `
     <div class="grid">
       <article class="panel">
-        <p class="kicker">Pack</p>
-        <h3>${escapeHtml(data.name)}</h3>
+        <p class="kicker">Checkout</p>
         <p class="muted">${escapeHtml((pack && pack.description) || "Consumer checkout")}</p>
         ${valid}${lockState}
         ${errors}
@@ -143,9 +142,9 @@ export function renderCards(items: Skill[] | Profile[], kind: string): string {
     .map(
       (item) => `
         <button type="button" class="card" data-kind="${kind}" data-id="${escapeHtml(item.id)}">
-          <p class="kicker">${escapeHtml(item.path)}</p>
+          <p class="kicker">${escapeHtml(kind)}</p>
           <h3>${escapeHtml(item.name || item.id)}</h3>
-          <p class="muted">${escapeHtml(item.description || "")}</p>
+          ${item.description ? `<p class="muted">${escapeHtml(item.description)}</p>` : ""}
         </button>`,
     )
     .join("")}</div>`;

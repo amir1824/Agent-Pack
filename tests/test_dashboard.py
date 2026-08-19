@@ -47,7 +47,13 @@ class DashboardTest(PackRepoTest):
             self.assertIn("example", [item["id"] for item in data["skills"]])
             with urlopen(f"http://{host}:{port}/") as resp:
                 html = resp.read().decode("utf-8")
-            self.assertIn("pack dashboard", html)
+            self.assertIn("agent-pack dashboard", html)
+            self.assertIn('class="mark">agent-pack</p>', html)
+            self.assertIn('id="view-title"', html)
+            with urlopen(f"http://{host}:{port}/app.js") as resp:
+                app_js = resp.read().decode("utf-8")
+            self.assertNotIn("VIEW_LABELS", app_js)
+            self.assertIn("view-title", app_js)
             with urlopen(f"http://{host}:{port}/health") as resp:
                 self.assertEqual(resp.status, 204)
         finally:

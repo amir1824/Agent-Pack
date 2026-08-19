@@ -1,7 +1,7 @@
 import { flowNodes } from "./flow";
 import { eventLogEntries, renderLogTimeline, allLogRows, clampLogPage } from "./log_rows";
 import { escapeHtml, renderMarkdown } from "./markdown";
-import { chip,renderCards, renderOverview, renderRuns, renderStats } from "./views";
+import { chip, renderCards, renderOverview, renderRuns, renderStats } from "./views";
 import type { Snapshot } from "./types";
 
 type AppState = {
@@ -43,6 +43,13 @@ const views: Record<string, (data: Snapshot) => string> = {
   constitution: renderConstitution,
 };
 
+function viewLabel(): string {
+  return (
+    document.querySelector(`.nav [data-view="${state.view}"]`)?.textContent?.trim() ||
+    state.view
+  );
+}
+
 function fillDrawer(runId: string, index: number): boolean {
   const data = state.data;
   if (!data) {
@@ -76,12 +83,13 @@ function paint(): void {
   const drawer = $("drawer");
   const keepOpen = Boolean(state.selected) && !drawer.hidden;
   const scrollTop = keepOpen ? $("drawer-body").scrollTop : 0;
-  $("pack-name").textContent = data.name;
+  const label = viewLabel();
+  $("view-title").textContent = label;
   $("kind-label").textContent = data.kind;
   $("root-path").textContent = data.root;
   const lock = data.lock;
   $("pin").textContent = lock ? `${lock.source}@${lock.tag}` : data.root;
-  document.title = `${data.name} · pack`;
+  document.title = `${label} · agent-pack`;
   renderStats(data, $("stats"));
   $("view").innerHTML = views[state.view](data);
   if (state.selected && fillDrawer(state.selected.runId, state.selected.index)) {

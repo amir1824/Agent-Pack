@@ -245,8 +245,7 @@
     return `
     <div class="grid">
       <article class="panel">
-        <p class="kicker">Pack</p>
-        <h3>${escapeHtml(data.name)}</h3>
+        <p class="kicker">Checkout</p>
         <p class="muted">${escapeHtml(pack && pack.description || "Consumer checkout")}</p>
         ${valid}${lockState}
         ${errors}
@@ -332,9 +331,9 @@
     return `<div class="grid">${items.map(
       (item) => `
         <button type="button" class="card" data-kind="${kind}" data-id="${escapeHtml(item.id)}">
-          <p class="kicker">${escapeHtml(item.path)}</p>
+          <p class="kicker">${escapeHtml(kind)}</p>
           <h3>${escapeHtml(item.name || item.id)}</h3>
-          <p class="muted">${escapeHtml(item.description || "")}</p>
+          ${item.description ? `<p class="muted">${escapeHtml(item.description)}</p>` : ""}
         </button>`
     ).join("")}</div>`;
   }
@@ -366,6 +365,9 @@
     profiles: (data) => renderCards(data.profiles, "profile"),
     constitution: renderConstitution
   };
+  function viewLabel() {
+    return document.querySelector(`.nav [data-view="${state.view}"]`)?.textContent?.trim() || state.view;
+  }
   function fillDrawer(runId, index) {
     const data = state.data;
     if (!data) {
@@ -395,12 +397,13 @@
     const drawer = $("drawer");
     const keepOpen = Boolean(state.selected) && !drawer.hidden;
     const scrollTop = keepOpen ? $("drawer-body").scrollTop : 0;
-    $("pack-name").textContent = data.name;
+    const label = viewLabel();
+    $("view-title").textContent = label;
     $("kind-label").textContent = data.kind;
     $("root-path").textContent = data.root;
     const lock = data.lock;
     $("pin").textContent = lock ? `${lock.source}@${lock.tag}` : data.root;
-    document.title = `${data.name} \xB7 pack`;
+    document.title = `${label} \xB7 agent-pack`;
     renderStats(data, $("stats"));
     $("view").innerHTML = views[state.view](data);
     if (state.selected && fillDrawer(state.selected.runId, state.selected.index)) {
